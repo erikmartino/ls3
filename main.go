@@ -145,6 +145,13 @@ func main() {
 				app.SetRoot(previousFlex, true)
 				return nil
 			}
+			if event.Key() == tcell.KeyRune && event.Rune() == ' ' {
+				// Scroll down a page
+				row, col := textView.GetScrollOffset()
+				_, _, _, height := textView.GetRect()
+				textView.ScrollTo(row+height-1, col)
+				return nil
+			}
 			return event
 		})
 
