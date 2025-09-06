@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -51,9 +52,7 @@ func main() {
 					text.SetText(fmt.Sprintf("s3://%s", bucketName))
 				})
 			}
-			list.AddItem("Quit", "", 'q', func() {
-				app.Stop()
-			})
+
 		})
 	}()
 
@@ -66,8 +65,52 @@ func main() {
 		AddItem(text, 3, 1, false).
 		AddItem(list, 0, 1, true)
 
+	var showFileContent func(bucketName, objectKey string, previousFlex *tview.Flex)
+
 	// Function to list objects in a bucket
 	var listObjects func(bucketName, prefix string)
+	showFileContent = func(bucketName, objectKey string, previousFlex *tview.Flex) {
+		textView := tview.NewTextView().
+			SetText("Loading file content...").
+			SetDynamicColors(true)
+
+		textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyLeft {
+				app.SetRoot(previousFlex, true)
+				return nil
+			}
+			return event
+		})
+
+		go func() {
+			input := &s3.GetObjectInput{
+				Bucket: &bucketName,
+				Key:    &objectKey,
+			}
+			result, err := client.GetObject(context.TODO(), input)
+			if err != nil {
+				app.QueueUpdateDraw(func() {
+					textView.SetText(fmt.Sprintf("Error: %v", err))
+				})
+				return
+			}
+			defer result.Body.Close()
+
+			body, err := io.ReadAll(result.Body)
+			if err != nil {
+				app.QueueUpdateDraw(func() {
+					textView.SetText(fmt.Sprintf("Error: %v", err))
+				})
+				return
+			}
+
+			app.QueueUpdateDraw(func() {
+				textView.SetText(string(body))
+			})
+		}()
+
+		app.SetRoot(textView, true)
+	}
 	listObjects = func(bucketName, prefix string) {
 		currentPath := fmt.Sprintf("s3://%s/%s", bucketName, prefix)
 		text.SetText(currentPath)
@@ -77,6 +120,11 @@ func main() {
 			path := fmt.Sprintf("s3://%s/%s", bucketName, mainText)
 			text.SetText(path)
 		})
+
+		objectFlex := tview.NewFlex().
+			SetDirection(tview.FlexRow).
+			AddItem(text, 3, 1, false).
+			AddItem(objectList, 0, 1, true)
 
 		objectList.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyLeft {
@@ -98,17 +146,14 @@ func main() {
 					itemName, _ := objectList.GetItemText(selectedItem)
 					if strings.HasSuffix(itemName, "/") {
 						listObjects(bucketName, itemName)
+					} else {
+						showFileContent(bucketName, itemName, objectFlex)
 					}
 				}
 				return nil
 			}
 			return event
 		})
-
-		objectFlex := tview.NewFlex().
-			SetDirection(tview.FlexRow).
-			AddItem(text, 3, 1, false).
-			AddItem(objectList, 0, 1, true)
 
 		app.SetRoot(objectFlex, true)
 
@@ -155,6 +200,11 @@ func main() {
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyCtrlC {
 			app.Stop()
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && event.Rune() == 'q' {
+			app.Stop()
+			return nil
 		}
 		return event
 	})
