@@ -47,6 +47,9 @@ func main() {
 		app.Stop()
 	})
 
+	// Hide secondary text to remove blank lines
+	list.ShowSecondaryText(false)
+
 	// Layout
 	flex := tview.NewFlex().
 		SetDirection(tview.FlexRow).
