@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -19,6 +22,14 @@ import (
 type AppState struct {
 	CurrentBucket string `json:"current_bucket"`
 	CurrentPrefix string `json:"current_prefix"`
+}
+
+// ObjectEntry holds information about an S3 object for display
+type ObjectEntry struct {
+	Key          string
+	IsDirectory  bool
+	Size         int64
+	LastModified *time.Time
 }
 
 // getConfigPath returns the path to the config file
@@ -66,6 +77,91 @@ func loadState() (AppState, error) {
 	return state, err
 }
 
+// formatFileSize formats a file size in bytes to human-readable format
+func formatFileSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// formatDate formats a time to a readable date string
+func formatDate(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("2006-01-02 15:04")
+}
+
+// formatFileEntry formats a filename with right-aligned size and date metadata
+func formatFileEntry(name string, size int64, date *time.Time, width int) string {
+	if width <= 0 {
+		width = 80 // default width
+	}
+
+	sizeStr := formatFileSize(size)
+	dateStr := formatDate(date)
+	metadata := fmt.Sprintf("%s  %s", sizeStr, dateStr)
+
+	// Calculate available space for the name
+	availableSpace := width - len(metadata) - 2 // 2 for padding
+	if availableSpace < len(name) {
+		// If name is too long, truncate it
+		if availableSpace > 3 {
+			name = name[:availableSpace-3] + "..."
+		}
+	}
+
+	// Create format string with right-aligned metadata
+	return fmt.Sprintf("%-*s %s", availableSpace, name, metadata)
+}
+
+// getTerminalWidth returns the current terminal width
+func getTerminalWidth() int {
+	// Try to get width from tput command
+	cmd := exec.Command("tput", "cols")
+	output, err := cmd.Output()
+	if err == nil {
+		if width, err := strconv.Atoi(strings.TrimSpace(string(output))); err == nil && width > 0 {
+			return width
+		}
+	}
+
+	// Try environment variables
+	if cols := os.Getenv("COLUMNS"); cols != "" {
+		if width, err := strconv.Atoi(cols); err == nil && width > 0 {
+			return width
+		}
+	}
+
+	// Default fallback
+	return 80
+}
+
+// formatDirEntry formats a directory name with right-aligned DIR indicator
+func formatDirEntry(name string, width int) string {
+	if width <= 0 {
+		width = 80 // default width
+	}
+
+	metadata := "DIR"
+	availableSpace := width - len(metadata) - 2 // 2 for padding
+	if availableSpace < len(name) {
+		// If name is too long, truncate it
+		if availableSpace > 3 {
+			name = name[:availableSpace-3] + "..."
+		}
+	}
+
+	return fmt.Sprintf("%-*s %s", availableSpace, name, metadata)
+}
+
 func main() {
 	// Initialize AWS config
 	cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -98,6 +194,9 @@ func main() {
 			text.SetText("Select an S3 bucket")
 		}
 	})
+
+	// Global variable to store the current refresh function for resize handling
+	var currentRefreshFunc func()
 
 	// Fetch S3 buckets and populate the list
 	go func() {
@@ -178,19 +277,112 @@ func main() {
 		saveState(currentState)
 		currentPath := fmt.Sprintf("s3://%s/%s", bucketName, prefix)
 		text.SetText(currentPath)
-		objectList := tview.NewList()
-		objectList.ShowSecondaryText(false)
-		objectList.SetChangedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
-			path := fmt.Sprintf("s3://%s/%s", bucketName, mainText)
-			text.SetText(path)
-		})
+		// Create table with proper columns
+		objectTable := tview.NewTable().
+			SetBorders(false).
+			SetSelectable(true, false)
+
+		// Store object entries for proper key handling
+		var objectEntries []ObjectEntry
 
 		objectFlex := tview.NewFlex().
 			SetDirection(tview.FlexRow).
 			AddItem(text, 3, 1, false).
-			AddItem(objectList, 0, 1, true)
+			AddItem(objectTable, 0, 1, true)
 
-		objectList.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		objectTable.SetSelectedFunc(func(row, column int) {
+			if row > 0 && row-1 < len(objectEntries) { // Skip header row
+				entry := objectEntries[row-1]
+				if entry.IsDirectory {
+					listObjects(bucketName, entry.Key)
+				} else {
+					showFileContent(bucketName, entry.Key, objectFlex)
+				}
+			}
+		})
+
+		// Update path display when selection changes
+		objectTable.SetSelectionChangedFunc(func(row, column int) {
+			if row > 0 && row-1 < len(objectEntries) { // Skip header row
+				filename := objectEntries[row-1].Key
+				path := fmt.Sprintf("s3://%s/%s", bucketName, filename)
+				text.SetText(path)
+			}
+		})
+
+		// Function to populate the table with current data
+		populateObjectTable := func() {
+			objectTable.Clear()
+			objectEntries = nil // Reset entries
+
+			go func() {
+				objects, err := listS3Objects(context.TODO(), client, bucketName, prefix)
+				if err != nil {
+					log.Printf("failed to list objects: %v", err)
+					return
+				}
+
+				app.QueueUpdateDraw(func() {
+					// Add table headers
+					objectTable.SetCell(0, 0, tview.NewTableCell("Name").SetTextColor(tcell.ColorYellow).SetSelectable(false))
+					objectTable.SetCell(0, 1, tview.NewTableCell("Size").SetTextColor(tcell.ColorYellow).SetSelectable(false))
+					objectTable.SetCell(0, 2, tview.NewTableCell("Modified").SetTextColor(tcell.ColorYellow).SetSelectable(false))
+
+					row := 1
+
+					// Add directories first
+					for _, p := range objects.CommonPrefixes {
+						entry := ObjectEntry{
+							Key:         *p.Prefix,
+							IsDirectory: true,
+						}
+						objectEntries = append(objectEntries, entry)
+						objectTable.SetCell(row, 0, tview.NewTableCell(*p.Prefix).SetTextColor(tcell.ColorBlue))
+						objectTable.SetCell(row, 1, tview.NewTableCell("DIR").SetTextColor(tcell.ColorBlue))
+						objectTable.SetCell(row, 2, tview.NewTableCell("").SetTextColor(tcell.ColorBlue))
+						row++
+					}
+
+					// Add files
+					for _, o := range objects.Contents {
+						if *o.Key != prefix {
+							entry := ObjectEntry{
+								Key:          *o.Key,
+								IsDirectory:  false,
+								Size:         *o.Size,
+								LastModified: o.LastModified,
+							}
+							objectEntries = append(objectEntries, entry)
+
+							sizeStr := formatFileSize(*o.Size)
+							dateStr := formatDate(o.LastModified)
+
+							objectTable.SetCell(row, 0, tview.NewTableCell(*o.Key))
+							objectTable.SetCell(row, 1, tview.NewTableCell(sizeStr))
+							objectTable.SetCell(row, 2, tview.NewTableCell(dateStr))
+							row++
+						}
+					}
+
+					// Select first data row if available
+					if row > 1 {
+						objectTable.Select(1, 0)
+					}
+				})
+			}()
+		}
+
+		// Set this as the current refresh function for resize handling
+		currentRefreshFunc = populateObjectTable
+
+		// Set up input capture for the object table
+		objectTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			// Handle refresh to update formatting when terminal is resized
+			if event.Key() == tcell.KeyCtrlL {
+				populateObjectTable()
+				return nil
+			}
+			// Handle existing navigation logic
 			if event.Key() == tcell.KeyLeft {
 				if prefix != "" {
 					newPrefix := prefix[:len(prefix)-1]
@@ -205,13 +397,13 @@ func main() {
 				}
 				return nil
 			} else if event.Key() == tcell.KeyEnter || event.Key() == tcell.KeyRight {
-				selectedItem := objectList.GetCurrentItem()
-				if selectedItem >= 0 {
-					itemName, _ := objectList.GetItemText(selectedItem)
-					if strings.HasSuffix(itemName, "/") {
-						listObjects(bucketName, itemName)
+				row, _ := objectTable.GetSelection()
+				if row > 0 && row-1 < len(objectEntries) { // Skip header row
+					entry := objectEntries[row-1]
+					if entry.IsDirectory {
+						listObjects(bucketName, entry.Key)
 					} else {
-						showFileContent(bucketName, itemName, objectFlex)
+						showFileContent(bucketName, entry.Key, objectFlex)
 					}
 				}
 				return nil
@@ -220,25 +412,7 @@ func main() {
 		})
 
 		app.SetRoot(objectFlex, true)
-
-		go func() {
-			objects, err := listS3Objects(context.TODO(), client, bucketName, prefix)
-			if err != nil {
-				log.Printf("failed to list objects: %v", err)
-				return
-			}
-
-			app.QueueUpdateDraw(func() {
-				for _, p := range objects.CommonPrefixes {
-					objectList.AddItem(*p.Prefix, "", 0, nil)
-				}
-				for _, o := range objects.Contents {
-					if *o.Key != prefix {
-						objectList.AddItem(*o.Key, "", 0, nil)
-					}
-				}
-			})
-		}()
+		populateObjectTable()
 	}
 
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -260,6 +434,11 @@ func main() {
 		}
 		if event.Key() == tcell.KeyRune && event.Rune() == 'q' {
 			app.Stop()
+			return nil
+		}
+		// Handle global refresh for window resize (Ctrl+L)
+		if event.Key() == tcell.KeyCtrlL && currentRefreshFunc != nil {
+			currentRefreshFunc()
 			return nil
 		}
 		return event
