@@ -1,0 +1,7 @@
+# Go binaries
+/ls3
+*.exe
+*.test
+
+# Dependency directory
+vendor/
