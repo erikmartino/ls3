@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"strings"
@@ -40,13 +39,13 @@ func main() {
 
 	// Fetch S3 buckets and populate the list
 	go func() {
-		result, err := client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
+		buckets, err := getBuckets(context.TODO(), client)
 		if err != nil {
 			log.Fatalf("failed to list buckets: %v", err)
 		}
 
 		app.QueueUpdateDraw(func() {
-			for _, bucket := range result.Buckets {
+			for _, bucket := range buckets {
 				bucketName := *bucket.Name
 				list.AddItem(bucketName, "", 0, func() {
 					text.SetText(fmt.Sprintf("s3://%s", bucketName))
@@ -83,20 +82,7 @@ func main() {
 		})
 
 		go func() {
-			input := &s3.GetObjectInput{
-				Bucket: &bucketName,
-				Key:    &objectKey,
-			}
-			result, err := client.GetObject(context.TODO(), input)
-			if err != nil {
-				app.QueueUpdateDraw(func() {
-					textView.SetText(fmt.Sprintf("Error: %v", err))
-				})
-				return
-			}
-			defer result.Body.Close()
-
-			body, err := io.ReadAll(result.Body)
+			body, err := getObjectContent(context.TODO(), client, bucketName, objectKey)
 			if err != nil {
 				app.QueueUpdateDraw(func() {
 					textView.SetText(fmt.Sprintf("Error: %v", err))
@@ -158,15 +144,7 @@ func main() {
 		app.SetRoot(objectFlex, true)
 
 		go func() {
-			delimiter := "/"
-			input := &s3.ListObjectsV2Input{
-				Bucket:    &bucketName,
-				Delimiter: &delimiter,
-			}
-			if prefix != "" {
-				input.Prefix = &prefix
-			}
-			objects, err := client.ListObjectsV2(context.TODO(), input)
+			objects, err := listS3Objects(context.TODO(), client, bucketName, prefix)
 			if err != nil {
 				log.Printf("failed to list objects: %v", err)
 				return
