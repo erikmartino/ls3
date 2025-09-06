@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -59,13 +60,36 @@ func main() {
 		AddItem(list, 0, 1, true)
 
 	// Function to list objects in a bucket
-	listObjects := func(bucketName string) {
-		text.SetText(fmt.Sprintf("s3://%s", bucketName))
+	var listObjects func(bucketName, prefix string)
+	listObjects = func(bucketName, prefix string) {
+		currentPath := fmt.Sprintf("s3://%s/%s", bucketName, prefix)
+		text.SetText(currentPath)
 		objectList := tview.NewList()
+		objectList.ShowSecondaryText(false)
 
 		objectList.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyLeft {
-				app.SetRoot(flex, true)
+				if prefix != "" {
+					newPrefix := prefix[:len(prefix)-1]
+					lastSlash := strings.LastIndex(newPrefix, "/")
+					if lastSlash != -1 {
+						listObjects(bucketName, newPrefix[:lastSlash+1])
+					} else {
+						listObjects(bucketName, "")
+					}
+				} else {
+					app.SetRoot(flex, true)
+				}
+				return nil
+			} else if event.Key() == tcell.KeyEnter || event.Key() == tcell.KeyRight {
+				selectedItem := objectList.GetCurrentItem()
+				if selectedItem >= 0 {
+					itemName, _ := objectList.GetItemText(selectedItem)
+					if strings.HasSuffix(itemName, "/") {
+						listObjects(bucketName, itemName)
+					}
+				}
+				return nil
 			}
 			return event
 		})
@@ -77,19 +101,29 @@ func main() {
 
 		app.SetRoot(objectFlex, true)
 
-		// Fetch objects from the selected bucket
 		go func() {
-			objects, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
-				Bucket: &bucketName,
-			})
+			delimiter := "/"
+			input := &s3.ListObjectsV2Input{
+				Bucket:    &bucketName,
+				Delimiter: &delimiter,
+			}
+			if prefix != "" {
+				input.Prefix = &prefix
+			}
+			objects, err := client.ListObjectsV2(context.TODO(), input)
 			if err != nil {
 				log.Printf("failed to list objects: %v", err)
 				return
 			}
 
 			app.QueueUpdateDraw(func() {
-				for _, object := range objects.Contents {
-					objectList.AddItem(*object.Key, "", 0, nil)
+				for _, p := range objects.CommonPrefixes {
+					objectList.AddItem(*p.Prefix, "", 0, nil)
+				}
+				for _, o := range objects.Contents {
+					if *o.Key != prefix {
+						objectList.AddItem(*o.Key, "", 0, nil)
+					}
 				}
 			})
 		}()
@@ -100,7 +134,7 @@ func main() {
 			selectedItem := list.GetCurrentItem()
 			if selectedItem >= 0 && selectedItem < list.GetItemCount()-1 {
 				bucketName, _ := list.GetItemText(selectedItem)
-				listObjects(bucketName)
+				listObjects(bucketName, "")
 			}
 		}
 		return event
