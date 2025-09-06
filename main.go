@@ -37,8 +37,9 @@ func main() {
 
 	// Populate the list with S3 buckets
 	for _, bucket := range result.Buckets {
-		list.AddItem(*bucket.Name, "", 0, func() {
-			text.SetText(fmt.Sprintf("Selected bucket: %s (created: %s)", *bucket.Name, bucket.CreationDate))
+		bucketName := *bucket.Name
+		list.AddItem(bucketName, "", 0, func() {
+			text.SetText(fmt.Sprintf("s3://%s", bucketName))
 		})
 	}
 
