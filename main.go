@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -12,6 +14,57 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
+
+// AppState holds the current state of the application
+type AppState struct {
+	CurrentBucket string `json:"current_bucket"`
+	CurrentPrefix string `json:"current_prefix"`
+}
+
+// getConfigPath returns the path to the config file
+func getConfigPath() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(homeDir, ".ls3_state.json"), nil
+}
+
+// saveState saves the current application state to a config file
+func saveState(state AppState) error {
+	configPath, err := getConfigPath()
+	if err != nil {
+		return err
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configPath, data, 0644)
+}
+
+// loadState loads the application state from the config file
+func loadState() (AppState, error) {
+	var state AppState
+	configPath, err := getConfigPath()
+	if err != nil {
+		return state, err
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Config file doesn't exist, return empty state
+			return state, nil
+		}
+		return state, err
+	}
+
+	err = json.Unmarshal(data, &state)
+	return state, err
+}
 
 func main() {
 	// Initialize AWS config
@@ -22,6 +75,15 @@ func main() {
 
 	// Create S3 client
 	client := s3.NewFromConfig(cfg)
+
+	// Load saved state
+	savedState, err := loadState()
+	if err != nil {
+		log.Printf("failed to load state: %v", err)
+	}
+
+	// Track current state
+	currentState := savedState
 
 	// Create TUI application
 	app := tview.NewApplication()
@@ -52,6 +114,7 @@ func main() {
 				})
 			}
 
+			// We'll handle saved state navigation after listObjects is defined
 		})
 	}()
 
@@ -69,6 +132,10 @@ func main() {
 	// Function to list objects in a bucket
 	var listObjects func(bucketName, prefix string)
 	showFileContent = func(bucketName, objectKey string, previousFlex *tview.Flex) {
+		// Update current state
+		currentState.CurrentBucket = bucketName
+		currentState.CurrentPrefix = strings.TrimSuffix(objectKey, filepath.Base(objectKey))
+		saveState(currentState)
 		textView := tview.NewTextView().
 			SetText("Loading file content...").
 			SetDynamicColors(true)
@@ -98,6 +165,10 @@ func main() {
 		app.SetRoot(textView, true)
 	}
 	listObjects = func(bucketName, prefix string) {
+		// Update current state
+		currentState.CurrentBucket = bucketName
+		currentState.CurrentPrefix = prefix
+		saveState(currentState)
 		currentPath := fmt.Sprintf("s3://%s/%s", bucketName, prefix)
 		text.SetText(currentPath)
 		objectList := tview.NewList()
@@ -177,15 +248,43 @@ func main() {
 	// Keybindings
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyCtrlC {
+			saveState(currentState)
 			app.Stop()
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && event.Rune() == 'q' {
+			saveState(currentState)
 			app.Stop()
 			return nil
 		}
 		return event
 	})
+
+	// Handle saved state navigation after everything is set up
+	if savedState.CurrentBucket != "" {
+		go func() {
+			// Wait for buckets to be loaded first
+			buckets, err := getBuckets(context.TODO(), client)
+			if err != nil {
+				return
+			}
+
+			// Check if the saved bucket still exists
+			bucketExists := false
+			for _, bucket := range buckets {
+				if *bucket.Name == savedState.CurrentBucket {
+					bucketExists = true
+					break
+				}
+			}
+
+			if bucketExists {
+				app.QueueUpdateDraw(func() {
+					listObjects(savedState.CurrentBucket, savedState.CurrentPrefix)
+				})
+			}
+		}()
+	}
 
 	// Run the application
 	if err := app.SetRoot(flex, true).Run(); err != nil {
