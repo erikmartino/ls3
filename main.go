@@ -255,12 +255,10 @@ func main() {
 	// Keybindings
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyCtrlC {
-			saveState(currentState)
 			app.Stop()
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && event.Rune() == 'q' {
-			saveState(currentState)
 			app.Stop()
 			return nil
 		}
