@@ -29,6 +29,13 @@ func main() {
 	text := tview.NewTextView().
 		SetTextAlign(tview.AlignCenter).
 		SetText("Select an S3 bucket")
+	list.SetChangedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
+		if mainText != "Quit" {
+			text.SetText(fmt.Sprintf("s3://%s", mainText))
+		} else {
+			text.SetText("Select an S3 bucket")
+		}
+	})
 
 	// Fetch S3 buckets and populate the list
 	go func() {
@@ -66,6 +73,10 @@ func main() {
 		text.SetText(currentPath)
 		objectList := tview.NewList()
 		objectList.ShowSecondaryText(false)
+		objectList.SetChangedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
+			path := fmt.Sprintf("s3://%s/%s", bucketName, mainText)
+			text.SetText(path)
+		})
 
 		objectList.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyLeft {
