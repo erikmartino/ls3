@@ -25,14 +25,14 @@ jobs:
 
       - name: Validate PKGBUILD
         run: |
-          if ! sudo -u builder bash -c 'cd /github/workspace && namcap PKGBUILD'; then
+          if ! sudo -u builder bash -c 'cd $GITHUB_WORKSPACE && namcap PKGBUILD'; then
             echo "PKGBUILD validation failed"
             exit 1
           fi
 
       - name: Build package
         run: |
-          if ! sudo -u builder bash -c 'cd /github/workspace && makepkg -f --noconfirm --syncdeps'; then
+          if ! sudo -u builder bash -c 'cd $GITHUB_WORKSPACE && makepkg -f --noconfirm --syncdeps'; then
             echo "Package build failed"
             exit 1
           fi
