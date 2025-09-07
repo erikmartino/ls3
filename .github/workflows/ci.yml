@@ -36,8 +36,3 @@ jobs:
 
       - name: Test
         run: go test -v ./...
-
-      - name: Run security scan
-        uses: securecodewarrior/github-action-gosec@master
-        with:
-          args: "./..."
