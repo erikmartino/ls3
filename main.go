@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -185,6 +188,40 @@ func parseS3URL(url string) (bucket, prefix string, err error) {
 	return bucket, prefix, nil
 }
 
+// isGzipped checks if the content is gzipped by checking the magic number
+func isGzipped(data []byte) bool {
+	return len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b
+}
+
+// decompressIfGzipped decompresses the data if it's gzipped, otherwise returns it as-is
+func decompressIfGzipped(data []byte, filename string) ([]byte, error) {
+	// Check by file extension first
+	isGzipFile := strings.HasSuffix(strings.ToLower(filename), ".gz") ||
+		strings.HasSuffix(strings.ToLower(filename), ".gzip")
+
+	// Also check by content magic number
+	hasGzipMagic := isGzipped(data)
+
+	if !isGzipFile && !hasGzipMagic {
+		return data, nil
+	}
+
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		// If gzip decompression fails, return original data
+		return data, nil
+	}
+	defer reader.Close()
+
+	decompressed, err := io.ReadAll(reader)
+	if err != nil {
+		// If reading fails, return original data
+		return data, nil
+	}
+
+	return decompressed, nil
+}
+
 func main() {
 	// Parse command line arguments
 	flag.Parse()
@@ -304,8 +341,17 @@ func main() {
 				return
 			}
 
+			// Decompress if gzipped
+			decompressed, err := decompressIfGzipped(body, objectKey)
+			if err != nil {
+				app.QueueUpdateDraw(func() {
+					textView.SetText(fmt.Sprintf("Error decompressing: %v", err))
+				})
+				return
+			}
+
 			app.QueueUpdateDraw(func() {
-				textView.SetText(string(body))
+				textView.SetText(string(decompressed))
 			})
 		}()
 
