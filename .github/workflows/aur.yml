@@ -15,7 +15,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm git base-devel sudo go fakeroot
+          pacman -S --noconfirm git base-devel sudo go fakeroot namcap`
 
       - name: Create build user
         run: |
