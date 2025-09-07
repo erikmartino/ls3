@@ -1,28 +1,28 @@
 name: Publish to personal AUR
-
 on:
   push:
     branches:
       - main
-
 jobs:
   publish:
     runs-on: ubuntu-latest
+    container: archlinux:latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Build and update repository
-        uses: a-b-r-o-w-n/run-arch-command@v1
-        with:
-          command: |
-            pacman -Syu --noconfirm
-            pacman -S --noconfirm git base-devel
-            makepkg -f --noconfirm
-            mkdir -p repo/x86_64
-            mv *.pkg.tar.zst repo/x86_64/
-            cd repo/x86_64
-            repo-add ls3.db.tar.gz *.pkg.tar.zst
+      - name: Install dependencies and build package
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm git base-devel
+          makepkg -f --noconfirm
+
+      - name: Set up repository
+        run: |
+          mkdir -p repo/x86_64
+          mv *.pkg.tar.zst repo/x86_64/
+          cd repo/x86_64
+          repo-add ls3.db.tar.gz *.pkg.tar.zst
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v3
@@ -30,3 +30,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./repo
           publish_branch: gh-pages
+          force_orphan: true
