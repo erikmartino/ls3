@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -162,7 +163,37 @@ func formatDirEntry(name string, width int) string {
 	return fmt.Sprintf("%-*s %s", availableSpace, name, metadata)
 }
 
+func parseS3URL(url string) (bucket, prefix string, err error) {
+	if !strings.HasPrefix(url, "s3://") {
+		return "", "", fmt.Errorf("URL must start with s3://")
+	}
+
+	path := strings.TrimPrefix(url, "s3://")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		return "", "", fmt.Errorf("invalid S3 URL: missing bucket name")
+	}
+
+	bucket = parts[0]
+	if len(parts) > 1 {
+		prefix = parts[1]
+		if !strings.HasSuffix(prefix, "/") && prefix != "" {
+			prefix += "/"
+		}
+	}
+
+	return bucket, prefix, nil
+}
+
 func main() {
+	// Parse command line arguments
+	flag.Parse()
+
+	var s3URL string
+	if len(flag.Args()) > 0 {
+		s3URL = flag.Args()[0]
+	}
+
 	// Initialize AWS config
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -180,6 +211,16 @@ func main() {
 
 	// Track current state
 	currentState := savedState
+
+	// Override with URL argument if provided
+	if s3URL != "" {
+		bucket, prefix, err := parseS3URL(s3URL)
+		if err != nil {
+			log.Fatalf("invalid S3 URL: %v", err)
+		}
+		currentState.CurrentBucket = bucket
+		currentState.CurrentPrefix = prefix
+	}
 
 	// Create TUI application
 	app := tview.NewApplication()
@@ -426,13 +467,26 @@ func main() {
 		return event
 	})
 
+	// Function to print current URL on exit
+	printCurrentURL := func() {
+		if currentState.CurrentBucket != "" {
+			url := fmt.Sprintf("s3://%s", currentState.CurrentBucket)
+			if currentState.CurrentPrefix != "" {
+				url += "/" + currentState.CurrentPrefix
+			}
+			fmt.Println(url)
+		}
+	}
+
 	// Keybindings
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyCtrlC {
+			printCurrentURL()
 			app.Stop()
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && event.Rune() == 'q' {
+			printCurrentURL()
 			app.Stop()
 			return nil
 		}
@@ -444,8 +498,23 @@ func main() {
 		return event
 	})
 
-	// Handle saved state navigation after everything is set up
-	if savedState.CurrentBucket != "" {
+	// Handle navigation: URL argument takes precedence over saved state
+	var targetBucket, targetPrefix string
+	var shouldNavigate bool
+
+	if s3URL != "" {
+		// URL argument provided - use it
+		targetBucket = currentState.CurrentBucket
+		targetPrefix = currentState.CurrentPrefix
+		shouldNavigate = true
+	} else if savedState.CurrentBucket != "" {
+		// No URL argument but saved state exists - use saved state
+		targetBucket = savedState.CurrentBucket
+		targetPrefix = savedState.CurrentPrefix
+		shouldNavigate = true
+	}
+
+	if shouldNavigate {
 		go func() {
 			// Wait for buckets to be loaded first
 			buckets, err := getBuckets(context.TODO(), client)
@@ -453,10 +522,10 @@ func main() {
 				return
 			}
 
-			// Check if the saved bucket still exists
+			// Check if the bucket exists
 			bucketExists := false
 			for _, bucket := range buckets {
-				if *bucket.Name == savedState.CurrentBucket {
+				if *bucket.Name == targetBucket {
 					bucketExists = true
 					break
 				}
@@ -464,7 +533,7 @@ func main() {
 
 			if bucketExists {
 				app.QueueUpdateDraw(func() {
-					listObjects(savedState.CurrentBucket, savedState.CurrentPrefix)
+					listObjects(targetBucket, targetPrefix)
 				})
 			}
 		}()
@@ -475,4 +544,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Print URL on normal exit
+	printCurrentURL()
 }
