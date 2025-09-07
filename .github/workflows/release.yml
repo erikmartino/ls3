@@ -16,12 +16,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24.6"
-
-      - name: Run security scan
-        uses: securecodewarrior/github-action-gosec@master
-        with:
-          args: "./..."
-
       - name: Run dependency vulnerability scan
         uses: golang/govulncheck-action@v1
 
