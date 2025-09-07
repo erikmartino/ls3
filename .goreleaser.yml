@@ -1,7 +1,13 @@
 # .goreleaser.yml
+version: 2
+
 before:
   hooks:
     - go mod tidy
+    - go mod verify
+    - go test ./...
+    - go vet ./...
+
 builds:
   - env:
       - CGO_ENABLED=0
@@ -12,25 +18,69 @@ builds:
     goarch:
       - amd64
       - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    flags:
+      - -trimpath
+
 archives:
   - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of uname.
     name_template: >-
-      {{ .ProjectName }}_      {{- title .Os }}_      {{- if eq .Arch "amd64" }}x86_64
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
     format_overrides:
-    - goos: windows
-      format: zip
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+
 checksum:
-  name_template: 'checksums.txt'
+  name_template: "checksums.txt"
+  algorithm: sha256
+
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
+
 changelog:
   sort: asc
+  use: github
   filters:
     exclude:
-      - '^docs:'
-      - '^test:'
+      - "^docs?:"
+      - "^test:"
+      - "^ci:"
+      - "^refactor:"
+      - "^style:"
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+  groups:
+    - title: "New Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "Security Updates"
+      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "Performance Improvements"
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: "Other Changes"
+      order: 999
+
+release:
+  github:
+    owner: erikmartino
+    name: ls3
+  name_template: "Release {{.Tag}}"
+  draft: false
+  prerelease: auto
+  mode: replace

@@ -5,19 +5,48 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container:
+      image: archlinux:latest
+      options: --user root
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Install dependencies and build package
+      - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm git base-devel sudo go
-          useradd -m builder
+          pacman -S --noconfirm git base-devel sudo go fakeroot
+
+      - name: Create build user
+        run: |
+          useradd -m -G wheel builder
           echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
           chown -R builder:builder .
-          sudo -u builder makepkg -f --noconfirm
+
+      - name: Validate PKGBUILD
+        run: |
+          if ! sudo -u builder bash -c 'cd /github/workspace && namcap PKGBUILD'; then
+            echo "PKGBUILD validation failed"
+            exit 1
+          fi
+
+      - name: Build package
+        run: |
+          if ! sudo -u builder bash -c 'cd /github/workspace && makepkg -f --noconfirm --syncdeps'; then
+            echo "Package build failed"
+            exit 1
+          fi
+
+      - name: Verify package
+        run: |
+          if ! ls -la *.pkg.tar.zst; then
+            echo "No package files found"
+            exit 1
+          fi
+          if ! sudo -u builder bash -c 'namcap *.pkg.tar.zst'; then
+            echo "Package verification failed"
+            exit 1
+          fi
 
       - name: Set up repository
         run: |
@@ -27,7 +56,7 @@ jobs:
           repo-add ls3.db.tar.gz *.pkg.tar.zst
 
       - name: Deploy to gh-pages
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./repo
