@@ -14,8 +14,11 @@ jobs:
       - name: Install dependencies and build package
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm git base-devel
-          makepkg -f --noconfirm
+          pacman -S --noconfirm git base-devel sudo
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+          chown -R builder:builder .
+          sudo -u builder makepkg -f --noconfirm
 
       - name: Set up repository
         run: |
