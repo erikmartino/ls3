@@ -18,6 +18,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -261,22 +262,20 @@ func main() {
 
 	// Create TUI application
 	app := tview.NewApplication()
-	list := tview.NewList()
+	bucketTable := tview.NewTable().
+		SetBorders(false).
+		SetSelectable(true, false)
 	text := tview.NewTextView().
 		SetTextAlign(tview.AlignCenter).
 		SetText("Select an S3 bucket")
-	list.SetChangedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
-		if mainText != "Quit" {
-			text.SetText(fmt.Sprintf("s3://%s", mainText))
-		} else {
-			text.SetText("Select an S3 bucket")
-		}
-	})
+
+	// Store bucket entries for proper navigation
+	var bucketEntries []types.Bucket
 
 	// Global variable to store the current refresh function for resize handling
 	var currentRefreshFunc func()
 
-	// Fetch S3 buckets and populate the list
+	// Fetch S3 buckets and populate the table
 	go func() {
 		buckets, err := getBuckets(context.TODO(), client)
 		if err != nil {
@@ -284,25 +283,46 @@ func main() {
 		}
 
 		app.QueueUpdateDraw(func() {
+			// Clear and set up table headers
+			bucketTable.Clear()
+			bucketTable.SetCell(0, 0, tview.NewTableCell("Bucket Name").SetTextColor(tcell.ColorYellow).SetSelectable(false))
+			bucketTable.SetCell(0, 1, tview.NewTableCell("Created").SetTextColor(tcell.ColorYellow).SetSelectable(false))
+
+			bucketEntries = buckets
+			row := 1
 			for _, bucket := range buckets {
 				bucketName := *bucket.Name
-				list.AddItem(bucketName, "", 0, func() {
-					text.SetText(fmt.Sprintf("s3://%s", bucketName))
-				})
+				creationDate := ""
+				if bucket.CreationDate != nil {
+					creationDate = bucket.CreationDate.Format("2006-01-02 15:04")
+				}
+
+				bucketTable.SetCell(row, 0, tview.NewTableCell(bucketName))
+				bucketTable.SetCell(row, 1, tview.NewTableCell(creationDate))
+				row++
 			}
 
-			// We'll handle saved state navigation after listObjects is defined
+			// Select first bucket if available
+			if len(buckets) > 0 {
+				bucketTable.Select(1, 0)
+				text.SetText(fmt.Sprintf("s3://%s", *buckets[0].Name))
+			}
 		})
 	}()
 
-	// Hide secondary text to remove blank lines
-	list.ShowSecondaryText(false)
+	// Update path display when bucket selection changes
+	bucketTable.SetSelectionChangedFunc(func(row, column int) {
+		if row > 0 && row-1 < len(bucketEntries) { // Skip header row
+			bucketName := *bucketEntries[row-1].Name
+			text.SetText(fmt.Sprintf("s3://%s", bucketName))
+		}
+	})
 
 	// Layout
 	flex := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(text, 3, 1, false).
-		AddItem(list, 0, 1, true)
+		AddItem(bucketTable, 0, 1, true)
 
 	var showFileContent func(bucketName, objectKey string, previousFlex *tview.Flex)
 
@@ -502,11 +522,11 @@ func main() {
 		populateObjectTable()
 	}
 
-	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+	bucketTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEnter || event.Key() == tcell.KeyRight {
-			selectedItem := list.GetCurrentItem()
-			if selectedItem >= 0 && selectedItem < list.GetItemCount()-1 {
-				bucketName, _ := list.GetItemText(selectedItem)
+			row, _ := bucketTable.GetSelection()
+			if row > 0 && row-1 < len(bucketEntries) { // Skip header row
+				bucketName := *bucketEntries[row-1].Name
 				listObjects(bucketName, "")
 			}
 		}
