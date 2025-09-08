@@ -333,8 +333,15 @@ func main() {
 		currentState.CurrentBucket = bucketName
 		currentState.CurrentPrefix = strings.TrimSuffix(objectKey, filepath.Base(objectKey))
 		saveState(currentState)
+
+		// Determine if this might be an image file for better loading message
+		loadingMessage := "Loading file content..."
+		if isImageFile(objectKey) {
+			loadingMessage = "Loading image and converting to ASCII art..."
+		}
+
 		textView := tview.NewTextView().
-			SetText("Loading file content...").
+			SetText(loadingMessage).
 			SetDynamicColors(true)
 
 		textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -371,7 +378,27 @@ func main() {
 			}
 
 			app.QueueUpdateDraw(func() {
-				textView.SetText(string(decompressed))
+				// Get terminal dimensions for ASCII art
+				_, _, width, height := textView.GetRect()
+				if width == 0 {
+					width = getTerminalWidth()
+				}
+				if height == 0 {
+					height = 25 // reasonable default
+				}
+
+				// Try to convert to ASCII art if it's an image
+				if ascii, isImage := convertToASCIIArt(decompressed, objectKey, width, height); isImage {
+					textView.SetText("[green]ASCII Art Preview[white]\n\n" + ascii + "\n\n[yellow]Press ESC or Left Arrow to go back[white]")
+				} else {
+					// Display as regular text
+					content := string(decompressed)
+					if len(content) > 0 {
+						textView.SetText(content)
+					} else {
+						textView.SetText("[yellow]File is empty or contains binary data[white]")
+					}
+				}
 			})
 		}()
 
