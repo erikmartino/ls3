@@ -90,7 +90,7 @@ brews:
     description: "A terminal-based user interface for browsing Amazon S3 buckets and objects"
     homepage: "https://github.com/erikmartino/ls3"
     license: "MIT"
-    folder: Formula
+    directory: Formula
     repository:
       owner: erikmartino
       name: homebrew-ls3
