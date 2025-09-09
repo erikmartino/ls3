@@ -51,6 +51,47 @@ func commandExists(cmd string) bool {
 	return err == nil
 }
 
+// downloadFile downloads a file from S3 to the current working directory
+func downloadFile(bucketName, key string) error {
+	// Create S3 client
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return fmt.Errorf("failed to load AWS config: %w", err)
+	}
+	client := s3.NewFromConfig(cfg)
+
+	// Get the object from S3
+	resp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: &bucketName,
+		Key:    &key,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get object: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Extract filename from key (get the last part after the last slash)
+	filename := filepath.Base(key)
+	if filename == "." || filename == "/" {
+		filename = "downloaded_file"
+	}
+
+	// Create the local file
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create local file: %w", err)
+	}
+	defer file.Close()
+
+	// Copy the content
+	_, err = io.Copy(file, resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to write file content: %w", err)
+	}
+
+	return nil
+}
+
 // AppState holds the current state of the application
 type AppState struct {
 	CurrentBucket string `json:"current_bucket"`
@@ -560,7 +601,7 @@ func main() {
 		currentRefreshFunc = populateObjectTable
 
 		// Set table title with help text
-		objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy S3 URL) ", bucketName, prefix))
+		objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'd' to download) ", bucketName, prefix))
 
 		// Set up input capture for the object table
 		objectTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -609,9 +650,36 @@ func main() {
 					go func() {
 						time.Sleep(2 * time.Second)
 						app.QueueUpdateDraw(func() {
-							objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy S3 URL) ", bucketName, prefix))
+							objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'd' to download) ", bucketName, prefix))
 						})
 					}()
+				}
+				return nil
+			} else if event.Rune() == 'd' {
+				// Download file to current directory
+				row, _ := objectTable.GetSelection()
+				if row > 0 && row-1 < len(objectEntries) { // Skip header row
+					entry := objectEntries[row-1]
+					if !entry.IsDirectory {
+						objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Downloading %s...) ", bucketName, prefix, entry.Key))
+						go func() {
+							err := downloadFile(bucketName, entry.Key)
+							app.QueueUpdateDraw(func() {
+								if err != nil {
+									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Download failed: %v) ", bucketName, prefix, err))
+								} else {
+									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Downloaded: %s) ", bucketName, prefix, entry.Key))
+								}
+								// Reset title after 3 seconds
+								go func() {
+									time.Sleep(3 * time.Second)
+									app.QueueUpdateDraw(func() {
+										objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'd' to download) ", bucketName, prefix))
+									})
+								}()
+							})
+						}()
+					}
 				}
 				return nil
 			}
