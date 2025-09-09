@@ -51,8 +51,40 @@ func commandExists(cmd string) bool {
 	return err == nil
 }
 
+// ProgressReader wraps an io.Reader to track progress
+type ProgressReader struct {
+	reader     io.Reader
+	total      int64
+	current    int64
+	onProgress func(current, total int64)
+}
+
+func (pr *ProgressReader) Read(p []byte) (int, error) {
+	n, err := pr.reader.Read(p)
+	pr.current += int64(n)
+	if pr.onProgress != nil {
+		pr.onProgress(pr.current, pr.total)
+	}
+	return n, err
+}
+
+
+// formatBytes formats byte count as human readable string
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
 // downloadFile downloads a file from S3 to the current working directory
-func downloadFile(bucketName, key string) error {
+func downloadFile(bucketName, key string, onProgress func(current, total int64)) error {
 	// Create S3 client
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -83,8 +115,21 @@ func downloadFile(bucketName, key string) error {
 	}
 	defer file.Close()
 
-	// Copy the content
-	_, err = io.Copy(file, resp.Body)
+	// Get content length for progress tracking
+	contentLength := int64(0)
+	if resp.ContentLength != nil {
+		contentLength = *resp.ContentLength
+	}
+
+	// Create progress reader
+	progressReader := &ProgressReader{
+		reader:     resp.Body,
+		total:      contentLength,
+		onProgress: onProgress,
+	}
+
+	// Copy the content with progress tracking
+	_, err = io.Copy(file, progressReader)
 	if err != nil {
 		return fmt.Errorf("failed to write file content: %w", err)
 	}
@@ -661,15 +706,35 @@ func main() {
 				if row > 0 && row-1 < len(objectEntries) { // Skip header row
 					entry := objectEntries[row-1]
 					if !entry.IsDirectory {
-						objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Downloading %s...) ", bucketName, prefix, entry.Key))
+						filename := filepath.Base(entry.Key)
+						if filename == "." || filename == "/" {
+							filename = "downloaded_file"
+						}
+
+						// We'll restore to objectFlex after download
+						var downloadCancelled bool
+
+						// Show progress window
+						progressModal, updateProgress := showProgressWindow(app, filename, func() {
+							downloadCancelled = true
+						})
+						app.SetRoot(progressModal, true)
+
 						go func() {
-							err := downloadFile(bucketName, entry.Key)
+							err := downloadFile(bucketName, entry.Key, updateProgress)
+
 							app.QueueUpdateDraw(func() {
-								if err != nil {
+								// Restore original view
+								app.SetRoot(objectFlex, true)
+
+								if downloadCancelled {
+									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Download cancelled) ", bucketName, prefix))
+								} else if err != nil {
 									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Download failed: %v) ", bucketName, prefix, err))
 								} else {
-									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Downloaded: %s) ", bucketName, prefix, entry.Key))
+									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Downloaded: %s) ", bucketName, prefix, filename))
 								}
+
 								// Reset title after 3 seconds
 								go func() {
 									time.Sleep(3 * time.Second)
