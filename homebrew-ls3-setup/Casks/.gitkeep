@@ -1,0 +1,2 @@
+# This file ensures the Casks directory is tracked in git
+# GoReleaser will automatically generate and update the ls3.rb cask file here

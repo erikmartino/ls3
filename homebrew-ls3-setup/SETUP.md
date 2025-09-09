@@ -23,11 +23,11 @@ git branch -M main
 
 # Copy the files from this setup directory
 cp ../homebrew-ls3-setup/README.md .
-cp -r ../homebrew-ls3-setup/Formula .
+cp -r ../homebrew-ls3-setup/Casks .
 
 # Add and commit the files
 git add .
-git commit -m "Initial commit: Add README and Formula directory"
+git commit -m "Initial commit: Add README and Casks directory"
 
 # Add the remote origin (replace 'erikmartino' with your GitHub username if different)
 git remote add origin https://github.com/erikmartino/homebrew-ls3.git
@@ -82,8 +82,8 @@ export GITHUB_TOKEN="your_token_here"
 
 3. Check that:
    - A new release was created on GitHub
-   - The homebrew formula was automatically added to your `homebrew-ls3` repository
-   - The formula file is located at `Formula/ls3.rb`
+   - The homebrew cask was automatically added to your `homebrew-ls3` repository
+   - The cask file is located at `Casks/ls3.rb`
 
 ## Step 6: Verify Installation
 
@@ -110,7 +110,7 @@ ls3 --help
 ### Repository Issues
 - Ensure the `homebrew-ls3` repository is public
 - Verify the repository name follows the `homebrew-<name>` convention
-- Make sure the Formula directory exists (even if empty initially)
+- Make sure the Casks directory exists (even if empty initially)
 
 ### Release Issues
 - Check that your git working directory is clean
@@ -131,6 +131,6 @@ For future releases, simply:
 
 1. Create and push a new tag: `git tag v1.x.x && git push origin v1.x.x`
 2. Run GoReleaser: `goreleaser release --clean`
-3. GoReleaser will automatically update the Homebrew formula
+3. GoReleaser will automatically update the Homebrew cask
 
 That's it! Your application will be available via Homebrew.

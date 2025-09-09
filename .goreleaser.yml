@@ -85,19 +85,16 @@ release:
   prerelease: auto
   mode: replace
 
-brews:
+homebrew_casks:
   - name: ls3
     description: "A terminal-based user interface for browsing Amazon S3 buckets and objects"
     homepage: "https://github.com/erikmartino/ls3"
     license: "MIT"
-    directory: Formula
+    directory: Casks
     repository:
       owner: erikmartino
       name: homebrew-ls3
     commit_author:
       name: "Erik Martino"
       email: "erik.martino@gmail.com"
-    install: |
-      bin.install "ls3"
-    test: |
-      system "#{bin}/ls3", "--help"
+    binary: "ls3"

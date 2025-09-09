@@ -6,7 +6,7 @@ This is a custom Homebrew tap for the ls3 S3 TUI browser.
 
 ```bash
 brew tap erikmartino/ls3
-brew install ls3
+brew install --cask ls3
 ```
 
 ## About ls3
