@@ -23,6 +23,34 @@ import (
 	"github.com/rivo/tview"
 )
 
+// copyToClipboard copies text to the system clipboard
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+
+	// Detect platform and use appropriate clipboard command
+	switch {
+	case commandExists("pbcopy"): // macOS
+		cmd = exec.Command("pbcopy")
+	case commandExists("xclip"): // Linux with xclip
+		cmd = exec.Command("xclip", "-selection", "clipboard")
+	case commandExists("xsel"): // Linux with xsel
+		cmd = exec.Command("xsel", "--clipboard", "--input")
+	case commandExists("wl-copy"): // Wayland
+		cmd = exec.Command("wl-copy")
+	default:
+		return fmt.Errorf("no clipboard utility found (install pbcopy, xclip, xsel, or wl-copy)")
+	}
+
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
+}
+
+// commandExists checks if a command is available in PATH
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
 // AppState holds the current state of the application
 type AppState struct {
 	CurrentBucket string `json:"current_bucket"`
@@ -531,6 +559,9 @@ func main() {
 		// Set this as the current refresh function for resize handling
 		currentRefreshFunc = populateObjectTable
 
+		// Set table title with help text
+		objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy S3 URL) ", bucketName, prefix))
+
 		// Set up input capture for the object table
 		objectTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			// Handle refresh to update formatting when terminal is resized
@@ -561,6 +592,26 @@ func main() {
 					} else {
 						showFileContent(bucketName, entry.Key, objectFlex)
 					}
+				}
+				return nil
+			} else if event.Rune() == 'c' {
+				// Copy S3 URL to clipboard
+				row, _ := objectTable.GetSelection()
+				if row > 0 && row-1 < len(objectEntries) { // Skip header row
+					entry := objectEntries[row-1]
+					s3URL := fmt.Sprintf("s3://%s/%s", bucketName, entry.Key)
+					if err := copyToClipboard(s3URL); err != nil {
+						objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Failed to copy: %v) ", bucketName, prefix, err))
+					} else {
+						objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Copied: %s) ", bucketName, prefix, s3URL))
+					}
+					// Reset title after 2 seconds
+					go func() {
+						time.Sleep(2 * time.Second)
+						app.QueueUpdateDraw(func() {
+							objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy S3 URL) ", bucketName, prefix))
+						})
+					}()
 				}
 				return nil
 			}
