@@ -149,6 +149,28 @@ func getTerminalWidth() int {
 	return 80
 }
 
+// getTerminalHeight returns the current terminal height
+func getTerminalHeight() int {
+	// Try to get height from tput command
+	cmd := exec.Command("tput", "lines")
+	output, err := cmd.Output()
+	if err == nil {
+		if height, err := strconv.Atoi(strings.TrimSpace(string(output))); err == nil && height > 0 {
+			return height
+		}
+	}
+
+	// Try environment variables
+	if lines := os.Getenv("LINES"); lines != "" {
+		if height, err := strconv.Atoi(lines); err == nil && height > 0 {
+			return height
+		}
+	}
+
+	// Default fallback
+	return 25
+}
+
 // formatDirEntry formats a directory name with right-aligned DIR indicator
 func formatDirEntry(name string, width int) string {
 	if width <= 0 {
@@ -378,13 +400,13 @@ func main() {
 			}
 
 			app.QueueUpdateDraw(func() {
-				// Get terminal dimensions for ASCII art
+				// Get current terminal dimensions for optimal ASCII art scaling
 				_, _, width, height := textView.GetRect()
 				if width == 0 {
 					width = getTerminalWidth()
 				}
 				if height == 0 {
-					height = 25 // reasonable default
+					height = getTerminalHeight()
 				}
 
 				// Try to convert to ASCII art if it's an image

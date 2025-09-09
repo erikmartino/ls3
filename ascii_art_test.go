@@ -129,7 +129,7 @@ func TestConvertImageToASCII(t *testing.T) {
 	}
 
 	// Test conversion
-	ascii, err := convertImageToASCII(imageData, 40, 20)
+	ascii, err := convertImageToASCII(imageData, 40, 20, 80, 25)
 	if err != nil {
 		t.Fatalf("Failed to convert image to ASCII: %v", err)
 	}
@@ -187,13 +187,13 @@ func TestConvertToASCIIArt(t *testing.T) {
 func TestConvertImageToASCIIErrors(t *testing.T) {
 	// Test with invalid image data
 	invalidData := []byte("This is not image data")
-	_, err := convertImageToASCII(invalidData, 40, 20)
+	_, err := convertImageToASCII(invalidData, 40, 20, 80, 25)
 	if err == nil {
 		t.Error("Expected error when converting invalid image data")
 	}
 
 	// Test with empty data
-	_, err = convertImageToASCII([]byte{}, 40, 20)
+	_, err = convertImageToASCII([]byte{}, 40, 20, 80, 25)
 	if err == nil {
 		t.Error("Expected error when converting empty data")
 	}
@@ -207,7 +207,7 @@ func TestConvertImageToASCIISmallDimensions(t *testing.T) {
 	}
 
 	// Test with very small output dimensions
-	ascii, err := convertImageToASCII(imageData, 1, 1)
+	ascii, err := convertImageToASCII(imageData, 1, 1, 80, 25)
 	if err != nil {
 		t.Fatalf("Failed to convert small image: %v", err)
 	}
@@ -228,7 +228,7 @@ func BenchmarkConvertImageToASCII(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := convertImageToASCII(imageData, 80, 40)
+		_, err := convertImageToASCII(imageData, 80, 40, 120, 50)
 		if err != nil {
 			b.Fatalf("Conversion failed: %v", err)
 		}

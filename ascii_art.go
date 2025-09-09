@@ -18,7 +18,7 @@ import (
 const asciiChars = "█▉▊▋▌▍▎▏▓▒░@%#*+=-:. "
 
 // convertImageToASCII converts an image to ASCII art
-func convertImageToASCII(imageData []byte, maxWidth, maxHeight int) (string, error) {
+func convertImageToASCII(imageData []byte, maxWidth, maxHeight, terminalWidth, terminalHeight int) (string, error) {
 	// Decode the image
 	img, format, err := image.Decode(bytes.NewReader(imageData))
 	if err != nil {
@@ -31,21 +31,22 @@ func convertImageToASCII(imageData []byte, maxWidth, maxHeight int) (string, err
 	height := bounds.Dy()
 
 	// Calculate scaling to fit within terminal dimensions
-	// Account for character aspect ratio (characters are taller than wide)
-	aspectRatio := float64(width) / float64(height)
+	// Account for character aspect ratio (characters are taller than wide, roughly 2:1)
+	const charAspectRatio = 0.5 // Width/Height ratio of terminal characters
+
+	// Adjust the image aspect ratio to account for character dimensions
+	imageAspectRatio := float64(width) / float64(height)
+	adjustedAspectRatio := imageAspectRatio / charAspectRatio
 
 	var newWidth, newHeight int
-	if width > maxWidth || height > maxHeight {
-		if float64(maxWidth)/aspectRatio <= float64(maxHeight) {
-			newWidth = maxWidth
-			newHeight = int(float64(maxWidth) / aspectRatio)
-		} else {
-			newHeight = maxHeight
-			newWidth = int(float64(maxHeight) * aspectRatio)
-		}
+	if adjustedAspectRatio > float64(maxWidth)/float64(maxHeight) {
+		// Width-constrained
+		newWidth = maxWidth
+		newHeight = int(float64(maxWidth) / adjustedAspectRatio)
 	} else {
-		newWidth = width
-		newHeight = height
+		// Height-constrained
+		newHeight = maxHeight
+		newWidth = int(float64(maxHeight) * adjustedAspectRatio)
 	}
 
 	// Ensure minimum dimensions
@@ -58,7 +59,14 @@ func convertImageToASCII(imageData []byte, maxWidth, maxHeight int) (string, err
 
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("┌─ Image: %dx%d (%s) ─┐\n", width, height, format))
-	result.WriteString(fmt.Sprintf("├─ ASCII: %dx%d ─┤\n", newWidth, newHeight))
+	result.WriteString(fmt.Sprintf("├─ ASCII: %dx%d (term: %dx%d, max: %dx%d) ─┤\n", newWidth, newHeight, terminalWidth, terminalHeight, maxWidth, maxHeight))
+
+	// Show coordinate ranges being sampled
+	maxImgX := int(float64(newWidth-1) * float64(width) / float64(newWidth))
+	maxImgY := int(float64(newHeight-1) * float64(height) / float64(newHeight))
+	midImgX := int(float64(newWidth/2) * float64(width) / float64(newWidth))
+	midImgY := int(float64(newHeight/2) * float64(height) / float64(newHeight))
+	result.WriteString(fmt.Sprintf("├─ Sampling: X[0,%d,%d] Y[0,%d,%d] of %dx%d ─┤\n", midImgX, maxImgX, midImgY, maxImgY, width, height))
 	result.WriteString("└" + strings.Repeat("─", newWidth+2) + "┘\n")
 
 	// Convert to ASCII
@@ -68,8 +76,15 @@ func convertImageToASCII(imageData []byte, maxWidth, maxHeight int) (string, err
 			imgX := int(float64(x) * float64(width) / float64(newWidth))
 			imgY := int(float64(y) * float64(height) / float64(newHeight))
 
-			// Get pixel color
-			r, g, b, _ := img.At(imgX, imgY).RGBA()
+			// Get pixel color including alpha channel
+			r, g, b, a := img.At(imgX, imgY).RGBA()
+
+			// Handle transparency by blending with white background
+			// If pixel is transparent, blend with white (65535, 65535, 65535)
+			alpha := float64(a) / 65535.0
+			r = uint32(float64(r)*alpha + 65535.0*(1.0-alpha))
+			g = uint32(float64(g)*alpha + 65535.0*(1.0-alpha))
+			b = uint32(float64(b)*alpha + 65535.0*(1.0-alpha))
 
 			// Convert to grayscale (ITU-R BT.709 standard luminance formula)
 			gray := 0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)
@@ -150,24 +165,27 @@ func convertToASCIIArt(data []byte, filename string, terminalWidth, terminalHeig
 	}
 
 	// Calculate reasonable dimensions for ASCII art in terminal
-	maxWidth := terminalWidth - 6          // Leave margin for border
-	maxHeight := (terminalHeight - 10) / 2 // Account for text height and UI elements
+	maxWidth := terminalWidth - 6   // Leave margin for border and scrollbar
+	maxHeight := terminalHeight - 8 // Account for headers and UI elements
 
-	// Ensure reasonable minimum and maximum sizes
-	if maxWidth < 40 {
-		maxWidth = 40
+	// Ensure reasonable minimum sizes but be more responsive to terminal size
+	if maxWidth < 20 {
+		maxWidth = 20
 	}
-	if maxWidth > 120 {
-		maxWidth = 120
-	}
-	if maxHeight < 15 {
-		maxHeight = 15
-	}
-	if maxHeight > 60 {
-		maxHeight = 60
+	if maxHeight < 10 {
+		maxHeight = 10
 	}
 
-	ascii, err := convertImageToASCII(data, maxWidth, maxHeight)
+	// For extremely large terminals, apply reasonable limits to avoid performance issues
+	// Only limit if terminal is exceptionally large (> 200 cols or > 100 rows)
+	if terminalWidth > 200 && maxWidth > 180 {
+		maxWidth = 180
+	}
+	if terminalHeight > 100 && maxHeight > 80 {
+		maxHeight = 80
+	}
+
+	ascii, err := convertImageToASCII(data, maxWidth, maxHeight, terminalWidth, terminalHeight)
 	if err != nil {
 		return fmt.Sprintf("Error converting image to ASCII: %v", err), false
 	}
