@@ -68,7 +68,6 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-
 // formatBytes formats byte count as human readable string
 func formatBytes(bytes int64) string {
 	const unit = 1024
@@ -363,6 +362,11 @@ func main() {
 	// Parse command line arguments
 	flag.Parse()
 
+	// Global variables to track current view state for help dialog
+	var currentBucketName string
+	var currentObjectFlex *tview.Flex
+	var currentMainFlex *tview.Flex
+
 	var s3URL string
 	if len(flag.Args()) > 0 {
 		s3URL = flag.Args()[0]
@@ -460,6 +464,9 @@ func main() {
 		AddItem(text, 3, 1, false).
 		AddItem(bucketTable, 0, 1, true)
 
+	// Store reference for help dialog
+	currentMainFlex = flex
+
 	var showFileContent func(bucketName, objectKey string, previousFlex *tview.Flex)
 
 	// Function to list objects in a bucket
@@ -545,6 +552,10 @@ func main() {
 		currentState.CurrentBucket = bucketName
 		currentState.CurrentPrefix = prefix
 		saveState(currentState)
+
+		// Update global variables for help dialog
+		currentBucketName = bucketName
+
 		currentPath := fmt.Sprintf("s3://%s/%s", bucketName, prefix)
 		text.SetText(currentPath)
 		// Create table with proper columns
@@ -559,6 +570,9 @@ func main() {
 			SetDirection(tview.FlexRow).
 			AddItem(text, 3, 1, false).
 			AddItem(objectTable, 0, 1, true)
+
+		// Store reference for help dialog
+		currentObjectFlex = objectFlex
 
 		objectTable.SetSelectedFunc(func(row, column int) {
 			if row > 0 && row-1 < len(objectEntries) { // Skip header row
@@ -666,6 +680,9 @@ func main() {
 						listObjects(bucketName, "")
 					}
 				} else {
+					// Returning to bucket view, clear current bucket state
+					currentBucketName = ""
+					currentObjectFlex = nil
 					app.SetRoot(flex, true)
 				}
 				return nil
@@ -787,6 +804,29 @@ func main() {
 		if event.Key() == tcell.KeyRune && event.Rune() == 'q' {
 			printCurrentURL()
 			app.Stop()
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && event.Rune() == '?' {
+			// Show help dialog
+			helpModal := showHelpDialog(app)
+
+			// Store function to restore previous view
+			restorePreviousView := func() {
+				if currentBucketName != "" && currentObjectFlex != nil {
+					// We're in object view
+					app.SetRoot(currentObjectFlex, true)
+				} else if currentMainFlex != nil {
+					// We're in bucket view
+					app.SetRoot(currentMainFlex, true)
+				}
+			}
+
+			app.SetRoot(helpModal, true)
+
+			// Set up handler to return to previous view
+			helpModal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+				restorePreviousView()
+			})
 			return nil
 		}
 		// Handle global refresh for window resize (Ctrl+L)
