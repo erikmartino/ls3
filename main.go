@@ -455,7 +455,8 @@ func main() {
 			// Clear and set up table headers
 			bucketTable.Clear()
 			bucketTable.SetCell(0, 0, tview.NewTableCell("Bucket Name").SetTextColor(tcell.ColorYellow).SetSelectable(false))
-			bucketTable.SetCell(0, 1, tview.NewTableCell("Created").SetTextColor(tcell.ColorYellow).SetSelectable(false))
+			bucketTable.SetCell(0, 1, tview.NewTableCell("Region").SetTextColor(tcell.ColorYellow).SetSelectable(false))
+			bucketTable.SetCell(0, 2, tview.NewTableCell("Created").SetTextColor(tcell.ColorYellow).SetSelectable(false))
 
 			bucketEntries = buckets
 			row := 1
@@ -467,7 +468,22 @@ func main() {
 				}
 
 				bucketTable.SetCell(row, 0, tview.NewTableCell(bucketName))
-				bucketTable.SetCell(row, 1, tview.NewTableCell(creationDate))
+				bucketTable.SetCell(row, 1, tview.NewTableCell("Loading...").SetTextColor(tcell.ColorGray))
+				bucketTable.SetCell(row, 2, tview.NewTableCell(creationDate))
+
+				// Fetch region for this bucket asynchronously
+				go func(bucketName string, rowIndex int) {
+					region, err := getBucketRegion(context.TODO(), client, bucketName)
+					regionText := region
+					if err != nil {
+						regionText = "Error"
+					}
+
+					app.QueueUpdateDraw(func() {
+						bucketTable.SetCell(rowIndex, 1, tview.NewTableCell(regionText))
+					})
+				}(bucketName, row)
+
 				row++
 			}
 

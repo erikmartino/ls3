@@ -13,9 +13,10 @@ import (
 
 // mockS3Client is a mock implementation of the S3Client interface for testing.
 type mockS3Client struct {
-	ListBucketsFunc   func(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
-	ListObjectsV2Func func(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
-	GetObjectFunc     func(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	ListBucketsFunc       func(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
+	ListObjectsV2Func     func(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+	GetObjectFunc         func(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	GetBucketLocationFunc func(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
 }
 
 func (m *mockS3Client) ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error) {
@@ -28,6 +29,10 @@ func (m *mockS3Client) ListObjectsV2(ctx context.Context, params *s3.ListObjects
 
 func (m *mockS3Client) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	return m.GetObjectFunc(ctx, params, optFns...)
+}
+
+func (m *mockS3Client) GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
+	return m.GetBucketLocationFunc(ctx, params, optFns...)
 }
 
 func TestGetBuckets(t *testing.T) {
@@ -109,5 +114,43 @@ func TestGetObjectContent(t *testing.T) {
 
 	if string(body) != content {
 		t.Errorf("expected content '%s', got '%s'", content, string(body))
+	}
+}
+
+func TestGetBucketRegion(t *testing.T) {
+	mockClient := &mockS3Client{
+		GetBucketLocationFunc: func(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
+			return &s3.GetBucketLocationOutput{
+				LocationConstraint: types.BucketLocationConstraint("us-west-2"),
+			}, nil
+		},
+	}
+
+	region, err := getBucketRegion(context.TODO(), mockClient, "test-bucket")
+	if err != nil {
+		t.Fatalf("getBucketRegion returned an error: %v", err)
+	}
+
+	if region != "us-west-2" {
+		t.Errorf("expected region 'us-west-2', got '%s'", region)
+	}
+}
+
+func TestGetBucketRegionUsEast1(t *testing.T) {
+	mockClient := &mockS3Client{
+		GetBucketLocationFunc: func(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
+			return &s3.GetBucketLocationOutput{
+				LocationConstraint: "",
+			}, nil
+		},
+	}
+
+	region, err := getBucketRegion(context.TODO(), mockClient, "test-bucket")
+	if err != nil {
+		t.Fatalf("getBucketRegion returned an error: %v", err)
+	}
+
+	if region != "us-east-1" {
+		t.Errorf("expected region 'us-east-1', got '%s'", region)
 	}
 }

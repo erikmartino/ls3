@@ -1,39 +1,54 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/rivo/tview"
 )
 
 // showHelpDialog displays a help dialog with all available shortcuts
 func showHelpDialog(app *tview.Application) *tview.Modal {
-	helpText := `[yellow]ls3 - S3 Browser Shortcuts[white]
+	// Use fixed-width formatting for better alignment
+	helpText := fmt.Sprintf(`[yellow]ls3 - S3 Browser Shortcuts[-]
 
-[yellow]Navigation:[white]
-  [green]↑/↓[white]        Navigate up/down in lists
-  [green]←/Backspace[white] Go back / up one level
-  [green]→/Enter[white]     Enter directory / view file
-  [green]Ctrl+L[white]      Refresh current view
+[cyan]Navigation:[-]
+  %-15s %s
+  %-15s %s
+  %-15s %s
+  %-15s %s
 
-[yellow]File Operations:[white]
-  [green]c[white]           Copy S3 URL to clipboard
-  [green]d[white]           Download file to current directory
+[cyan]File Operations:[-]
+  %-15s %s
+  %-15s %s
+  %-15s %s
 
-[yellow]Application:[white]
-  [green]?[white]           Show this help dialog
-  [green]Ctrl+C[white]      Exit application (prints current S3 URL)
-  [green]ESC[white]         Close dialogs / go back
+[cyan]Application:[-]
+  %-15s %s
+  %-15s %s
+  %-15s %s
 
-[yellow]File Viewing:[white]
-  [green]ESC/←[white]       Return to file browser from file view
+[cyan]File Viewing:[-]
+  %-15s %s
 
-[yellow]Features:[white]
+[cyan]Features:[-]
   • ASCII art preview for images
   • Gzip decompression for compressed files
   • Progress window for downloads with cancel option
   • Session state persistence
   • Command line S3 URL support
 
-Press ESC or Enter to close this help.`
+Press ESC or Enter to close this help.`,
+		"[white]↑/↓[-]", "Navigate up/down in lists",
+		"[white]←/Backspace[-]", "Go back / up one level",
+		"[white]→/Enter[-]", "Enter directory / view file",
+		"[white]Ctrl+L[-]", "Refresh current view",
+		"[white]c[-]", "Copy S3 URL to clipboard",
+		"[white]C[-]", "Copy presigned URL to clipboard",
+		"[white]d[-]", "Download file to current directory",
+		"[white]?[-]", "Show this help dialog",
+		"[white]Ctrl+C[-]", "Exit application (prints current S3 URL)",
+		"[white]ESC[-]", "Close dialogs / go back",
+		"[white]ESC/←[-]", "Return to file browser from file view")
 
 	modal := tview.NewModal().
 		SetText(helpText).
