@@ -60,6 +60,26 @@ func commandExists(cmd string) bool {
 	return err == nil
 }
 
+// generatePresignedURL generates a presigned URL for an S3 object
+func generatePresignedURL(ctx context.Context, client *s3.Client, bucketName, objectKey string) (string, error) {
+	// Create presign client
+	presignClient := s3.NewPresignClient(client)
+
+	// Generate presigned URL valid for 1 hour
+	request, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: &bucketName,
+		Key:    &objectKey,
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = time.Hour * 1 // 1 hour expiration
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+
+	return request.URL, nil
+}
+
 // ProgressReader wraps an io.Reader to track progress
 type ProgressReader struct {
 	reader     io.Reader
@@ -669,7 +689,7 @@ func main() {
 		currentRefreshFunc = populateObjectTable
 
 		// Set table title with help text
-		objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'd' to download) ", bucketName, prefix))
+		objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'C' for presigned URL, 'd' to download) ", bucketName, prefix))
 
 		// Set up input capture for the object table
 		objectTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -721,7 +741,7 @@ func main() {
 					go func() {
 						time.Sleep(2 * time.Second)
 						app.QueueUpdateDraw(func() {
-							objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'd' to download) ", bucketName, prefix))
+							objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'C' for presigned URL, 'd' to download) ", bucketName, prefix))
 						})
 					}()
 				}
@@ -765,7 +785,35 @@ func main() {
 								go func() {
 									time.Sleep(3 * time.Second)
 									app.QueueUpdateDraw(func() {
-										objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'd' to download) ", bucketName, prefix))
+										objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'C' for presigned URL, 'd' to download) ", bucketName, prefix))
+									})
+								}()
+							})
+						}()
+					}
+				}
+				return nil
+			} else if event.Rune() == 'C' {
+				// Generate presigned URL and copy to clipboard (shift-C)
+				row, _ := objectTable.GetSelection()
+				if row > 0 && row-1 < len(objectEntries) { // Skip header row
+					entry := objectEntries[row-1]
+					if !entry.IsDirectory {
+						go func() {
+							presignedURL, err := generatePresignedURL(context.TODO(), client, bucketName, entry.Key)
+							app.QueueUpdateDraw(func() {
+								if err != nil {
+									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Failed to generate presigned URL: %v) ", bucketName, prefix, err))
+								} else if copyErr := copyToClipboard(presignedURL); copyErr != nil {
+									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Failed to copy presigned URL: %v) ", bucketName, prefix, copyErr))
+								} else {
+									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Copied presigned URL) ", bucketName, prefix))
+								}
+								// Reset title after 2 seconds
+								go func() {
+									time.Sleep(2 * time.Second)
+									app.QueueUpdateDraw(func() {
+										objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Press 'c' to copy, 'C' for presigned URL, 'd' to download) ", bucketName, prefix))
 									})
 								}()
 							})
