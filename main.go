@@ -27,16 +27,25 @@ import (
 func copyToClipboard(text string) error {
 	var cmd *exec.Cmd
 
+	// Detect session type for Linux systems
+	sessionType := os.Getenv("XDG_SESSION_TYPE")
+
 	// Detect platform and use appropriate clipboard command
 	switch {
 	case commandExists("pbcopy"): // macOS
 		cmd = exec.Command("pbcopy")
-	case commandExists("xclip"): // Linux with xclip
-		cmd = exec.Command("xclip", "-selection", "clipboard")
-	case commandExists("xsel"): // Linux with xsel
-		cmd = exec.Command("xsel", "--clipboard", "--input")
-	case commandExists("wl-copy"): // Wayland
+	case sessionType == "wayland" && commandExists("wl-copy"): // Wayland session
 		cmd = exec.Command("wl-copy")
+	case sessionType == "x11" && commandExists("xclip"): // X11 session with xclip
+		cmd = exec.Command("xclip", "-selection", "clipboard")
+	case sessionType == "x11" && commandExists("xsel"): // X11 session with xsel
+		cmd = exec.Command("xsel", "--clipboard", "--input")
+	case commandExists("wl-copy"): // Fallback: Wayland
+		cmd = exec.Command("wl-copy")
+	case commandExists("xclip"): // Fallback: Linux with xclip
+		cmd = exec.Command("xclip", "-selection", "clipboard")
+	case commandExists("xsel"): // Fallback: Linux with xsel
+		cmd = exec.Command("xsel", "--clipboard", "--input")
 	default:
 		return fmt.Errorf("no clipboard utility found (install pbcopy, xclip, xsel, or wl-copy)")
 	}
