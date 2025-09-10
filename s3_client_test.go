@@ -118,6 +118,7 @@ func TestGetObjectContent(t *testing.T) {
 }
 
 func TestGetBucketRegion(t *testing.T) {
+	clearCache() // Clear cache before test
 	mockClient := &mockS3Client{
 		GetBucketLocationFunc: func(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
 			return &s3.GetBucketLocationOutput{
@@ -137,6 +138,7 @@ func TestGetBucketRegion(t *testing.T) {
 }
 
 func TestGetBucketRegionUsEast1(t *testing.T) {
+	clearCache() // Clear cache before test
 	mockClient := &mockS3Client{
 		GetBucketLocationFunc: func(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
 			return &s3.GetBucketLocationOutput{

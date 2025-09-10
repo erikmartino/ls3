@@ -61,7 +61,21 @@ func commandExists(cmd string) bool {
 }
 
 // generatePresignedURL generates a presigned URL for an S3 object
-func generatePresignedURL(ctx context.Context, client *s3.Client, bucketName, objectKey string) (string, error) {
+func generatePresignedURL(ctx context.Context, clientManager *ClientManager, bucketName, objectKey string) (string, error) {
+	// Get region-specific client for this bucket
+	bucketClient, err := clientManager.GetClientForBucket(ctx, bucketName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get client for bucket: %w", err)
+	}
+
+	// Convert to concrete client for presigned URL generation
+	var client *s3.Client
+	if concreteClient, ok := bucketClient.(*s3.Client); ok {
+		client = concreteClient
+	} else {
+		return "", fmt.Errorf("failed to get concrete S3 client")
+	}
+
 	// Create presign client
 	presignClient := s3.NewPresignClient(client)
 
@@ -112,13 +126,20 @@ func formatBytes(bytes int64) string {
 }
 
 // downloadFile downloads a file from S3 to the current working directory
-func downloadFile(bucketName, key string, onProgress func(current, total int64)) error {
-	// Create S3 client
-	cfg, err := config.LoadDefaultConfig(context.TODO())
+func downloadFile(clientManager *ClientManager, bucketName, key string, onProgress func(current, total int64)) error {
+	// Get region-specific client for this bucket
+	bucketClient, err := clientManager.GetClientForBucket(context.TODO(), bucketName)
 	if err != nil {
-		return fmt.Errorf("failed to load AWS config: %w", err)
+		return fmt.Errorf("failed to get client for bucket: %w", err)
 	}
-	client := s3.NewFromConfig(cfg)
+
+	// Convert to concrete client for direct S3 operations
+	var client *s3.Client
+	if concreteClient, ok := bucketClient.(*s3.Client); ok {
+		client = concreteClient
+	} else {
+		return fmt.Errorf("failed to get concrete S3 client")
+	}
 
 	// Get the object from S3
 	resp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
@@ -407,8 +428,9 @@ func main() {
 		log.Fatalf("unable to load AWS config: %v", err)
 	}
 
-	// Create S3 client
+	// Create S3 client and client manager
 	client := s3.NewFromConfig(cfg)
+	clientManager := NewClientManager(client)
 
 	// Load saved state
 	savedState, err := loadState()
@@ -548,7 +570,16 @@ func main() {
 		})
 
 		go func() {
-			body, err := getObjectContent(context.TODO(), client, bucketName, objectKey)
+			// Get region-specific client for this bucket
+			bucketClient, err := clientManager.GetClientForBucket(context.TODO(), bucketName)
+			if err != nil {
+				app.QueueUpdateDraw(func() {
+					textView.SetText(fmt.Sprintf("Error getting client: %v", err))
+				})
+				return
+			}
+
+			body, err := getObjectContent(context.TODO(), bucketClient, bucketName, objectKey)
 			if err != nil {
 				app.QueueUpdateDraw(func() {
 					textView.SetText(fmt.Sprintf("Error: %v", err))
@@ -645,7 +676,14 @@ func main() {
 			objectEntries = nil // Reset entries
 
 			go func() {
-				objects, err := listS3Objects(context.TODO(), client, bucketName, prefix)
+				// Get region-specific client for this bucket
+				bucketClient, err := clientManager.GetClientForBucket(context.TODO(), bucketName)
+				if err != nil {
+					log.Printf("failed to get client for bucket: %v", err)
+					return
+				}
+
+				objects, err := listS3Objects(context.TODO(), bucketClient, bucketName, prefix)
 				if err != nil {
 					log.Printf("failed to list objects: %v", err)
 					return
@@ -783,7 +821,7 @@ func main() {
 						app.SetRoot(progressModal, true)
 
 						go func() {
-							err := downloadFile(bucketName, entry.Key, updateProgress)
+							err := downloadFile(clientManager, bucketName, entry.Key, updateProgress)
 
 							app.QueueUpdateDraw(func() {
 								// Restore original view
@@ -816,7 +854,7 @@ func main() {
 					entry := objectEntries[row-1]
 					if !entry.IsDirectory {
 						go func() {
-							presignedURL, err := generatePresignedURL(context.TODO(), client, bucketName, entry.Key)
+							presignedURL, err := generatePresignedURL(context.TODO(), clientManager, bucketName, entry.Key)
 							app.QueueUpdateDraw(func() {
 								if err != nil {
 									objectTable.SetTitle(fmt.Sprintf(" Objects in %s/%s (Failed to generate presigned URL: %v) ", bucketName, prefix, err))

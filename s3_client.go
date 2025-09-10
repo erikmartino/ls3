@@ -3,10 +3,31 @@ package main
 import (
 	"context"
 	"io"
+	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
+
+// Global cache for bucket regions and region-specific clients
+var (
+	bucketRegionCache = make(map[string]string)
+	regionClientCache = make(map[string]*s3.Client)
+	cacheMutex        sync.RWMutex
+)
+
+// ClientManager manages region-specific S3 clients
+type ClientManager struct {
+	defaultClient S3Client
+}
+
+// NewClientManager creates a new client manager
+func NewClientManager(defaultClient S3Client) *ClientManager {
+	return &ClientManager{
+		defaultClient: defaultClient,
+	}
+}
 
 // S3Client defines the interface for S3 client operations.
 type S3Client interface {
@@ -51,6 +72,15 @@ func getObjectContent(ctx context.Context, client S3Client, bucketName, objectKe
 }
 
 func getBucketRegion(ctx context.Context, client S3Client, bucketName string) (string, error) {
+	// Check cache first
+	cacheMutex.RLock()
+	if region, exists := bucketRegionCache[bucketName]; exists {
+		cacheMutex.RUnlock()
+		return region, nil
+	}
+	cacheMutex.RUnlock()
+
+	// Not in cache, fetch from AWS
 	result, err := client.GetBucketLocation(ctx, &s3.GetBucketLocationInput{
 		Bucket: &bucketName,
 	})
@@ -59,8 +89,57 @@ func getBucketRegion(ctx context.Context, client S3Client, bucketName string) (s
 	}
 
 	// AWS returns empty string for us-east-1 region
-	if result.LocationConstraint == "" {
-		return "us-east-1", nil
+	region := string(result.LocationConstraint)
+	if region == "" {
+		region = "us-east-1"
 	}
-	return string(result.LocationConstraint), nil
+
+	// Cache the result
+	cacheMutex.Lock()
+	bucketRegionCache[bucketName] = region
+	cacheMutex.Unlock()
+
+	return region, nil
+}
+
+// GetClientForBucket returns a region-specific client for the bucket
+func (cm *ClientManager) GetClientForBucket(ctx context.Context, bucketName string) (S3Client, error) {
+	// Get the bucket's region (uses cache)
+	region, err := getBucketRegion(ctx, cm.defaultClient, bucketName)
+	if err != nil {
+		// If we can't get the region, fall back to default client
+		return cm.defaultClient, nil
+	}
+
+	// Check if we already have a client for this region
+	cacheMutex.RLock()
+	if client, exists := regionClientCache[region]; exists {
+		cacheMutex.RUnlock()
+		return client, nil
+	}
+	cacheMutex.RUnlock()
+
+	// Create a new region-specific client
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	if err != nil {
+		// If we can't create a region-specific client, fall back to default
+		return cm.defaultClient, nil
+	}
+
+	regionClient := s3.NewFromConfig(cfg)
+
+	// Cache the client
+	cacheMutex.Lock()
+	regionClientCache[region] = regionClient
+	cacheMutex.Unlock()
+
+	return regionClient, nil
+}
+
+// clearCache clears the internal caches (for testing)
+func clearCache() {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+	bucketRegionCache = make(map[string]string)
+	regionClientCache = make(map[string]*s3.Client)
 }
