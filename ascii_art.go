@@ -14,8 +14,8 @@ import (
 )
 
 // ASCII characters ordered from darkest to lightest
-// Using a more detailed character set for better image representation
-const asciiChars = "█▉▊▋▌▍▎▏▓▒░@%#*+=-:. "
+// Optimized character set for better visual contrast and recognition
+const asciiChars = "█@#%*+=~-:;,. "
 
 // convertImageToASCII converts an image to ASCII art
 func convertImageToASCII(imageData []byte, maxWidth, maxHeight, terminalWidth, terminalHeight int) (string, error) {
@@ -69,34 +69,32 @@ func convertImageToASCII(imageData []byte, maxWidth, maxHeight, terminalWidth, t
 	result.WriteString(fmt.Sprintf("├─ Sampling: X[0,%d,%d] Y[0,%d,%d] of %dx%d ─┤\n", midImgX, maxImgX, midImgY, maxImgY, width, height))
 	result.WriteString("└" + strings.Repeat("─", newWidth+2) + "┘\n")
 
-	// Convert to ASCII
+	// Convert to ASCII with improved sampling and edge enhancement
 	for y := 0; y < newHeight; y++ {
 		for x := 0; x < newWidth; x++ {
-			// Map ASCII coordinates back to image coordinates
-			imgX := int(float64(x) * float64(width) / float64(newWidth))
-			imgY := int(float64(y) * float64(height) / float64(newHeight))
+			// Calculate average intensity over a small area for better quality
+			intensity := samplePixelArea(img, x, y, newWidth, newHeight, width, height)
 
-			// Get pixel color including alpha channel
-			r, g, b, a := img.At(imgX, imgY).RGBA()
+			// Apply edge enhancement to improve feature recognition
+			edgeEnhancement := calculateEdgeEnhancement(img, x, y, newWidth, newHeight, width, height)
 
-			// Handle transparency by blending with white background
-			// If pixel is transparent, blend with white (65535, 65535, 65535)
-			alpha := float64(a) / 65535.0
-			r = uint32(float64(r)*alpha + 65535.0*(1.0-alpha))
-			g = uint32(float64(g)*alpha + 65535.0*(1.0-alpha))
-			b = uint32(float64(b)*alpha + 65535.0*(1.0-alpha))
+			// Combine base intensity with edge information
+			finalIntensity := intensity + edgeEnhancement*0.3
+			if finalIntensity > 1.0 {
+				finalIntensity = 1.0
+			}
+			if finalIntensity < 0.0 {
+				finalIntensity = 0.0
+			}
 
-			// Convert to grayscale (ITU-R BT.709 standard luminance formula)
-			gray := 0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)
+			// Apply contrast enhancement using sigmoid curve
+			finalIntensity = enhanceContrast(finalIntensity)
 
-			// Normalize to 0-1 range
-			intensity := gray / 65535.0
-
-			// Apply gamma correction for better visual representation
-			intensity = 1.0 - intensity // Invert for ASCII mapping
-
-			// Map to ASCII character with better distribution
-			charIndex := int(intensity * float64(len(asciiChars)))
+			// Map to ASCII character with improved distribution
+			charIndex := int(finalIntensity * float64(len(asciiChars)-1))
+			if charIndex < 0 {
+				charIndex = 0
+			}
 			if charIndex >= len(asciiChars) {
 				charIndex = len(asciiChars) - 1
 			}
@@ -107,6 +105,141 @@ func convertImageToASCII(imageData []byte, maxWidth, maxHeight, terminalWidth, t
 	}
 
 	return result.String(), nil
+}
+
+// samplePixelArea samples a small area around the target pixel for better quality
+func samplePixelArea(img image.Image, x, y, newWidth, newHeight, imgWidth, imgHeight int) float64 {
+	// Calculate the area in the original image that this ASCII character represents
+	xScale := float64(imgWidth) / float64(newWidth)
+	yScale := float64(imgHeight) / float64(newHeight)
+
+	// Sample a 2x2 area (or larger if scaling allows) for better quality
+	sampleSize := 2
+	if xScale > 2 {
+		sampleSize = int(xScale)
+	}
+	if sampleSize > 4 {
+		sampleSize = 4 // Limit for performance
+	}
+
+	var totalIntensity float64
+	var sampleCount int
+
+	centerX := int(float64(x) * xScale)
+	centerY := int(float64(y) * yScale)
+
+	for dy := -sampleSize / 2; dy <= sampleSize/2; dy++ {
+		for dx := -sampleSize / 2; dx <= sampleSize/2; dx++ {
+			imgX := centerX + dx
+			imgY := centerY + dy
+
+			// Bounds checking
+			if imgX < 0 || imgX >= imgWidth || imgY < 0 || imgY >= imgHeight {
+				continue
+			}
+
+			r, g, b, a := img.At(imgX, imgY).RGBA()
+
+			// Handle transparency
+			alpha := float64(a) / 65535.0
+			r = uint32(float64(r)*alpha + 65535.0*(1.0-alpha))
+			g = uint32(float64(g)*alpha + 65535.0*(1.0-alpha))
+			b = uint32(float64(b)*alpha + 65535.0*(1.0-alpha))
+
+			// Convert to grayscale using perceptual weights
+			gray := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+			intensity := 1.0 - (gray / 65535.0) // Invert for ASCII mapping
+
+			totalIntensity += intensity
+			sampleCount++
+		}
+	}
+
+	if sampleCount == 0 {
+		return 0.5 // Fallback
+	}
+
+	return totalIntensity / float64(sampleCount)
+}
+
+// calculateEdgeEnhancement detects edges to improve feature recognition
+func calculateEdgeEnhancement(img image.Image, x, y, newWidth, newHeight, imgWidth, imgHeight int) float64 {
+	xScale := float64(imgWidth) / float64(newWidth)
+	yScale := float64(imgHeight) / float64(newHeight)
+
+	centerX := int(float64(x) * xScale)
+	centerY := int(float64(y) * yScale)
+
+	// Simple Sobel-like edge detection
+	var gx, gy float64
+
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			imgX := centerX + dx
+			imgY := centerY + dy
+
+			// Bounds checking with clamping
+			if imgX < 0 {
+				imgX = 0
+			}
+			if imgX >= imgWidth {
+				imgX = imgWidth - 1
+			}
+			if imgY < 0 {
+				imgY = 0
+			}
+			if imgY >= imgHeight {
+				imgY = imgHeight - 1
+			}
+
+			r, g, b, a := img.At(imgX, imgY).RGBA()
+
+			// Handle transparency
+			alpha := float64(a) / 65535.0
+			r = uint32(float64(r)*alpha + 65535.0*(1.0-alpha))
+			g = uint32(float64(g)*alpha + 65535.0*(1.0-alpha))
+			b = uint32(float64(b)*alpha + 65535.0*(1.0-alpha))
+
+			gray := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+			intensity := gray / 65535.0
+
+			// Sobel kernels
+			sobelX := [][]float64{
+				{-1, 0, 1},
+				{-2, 0, 2},
+				{-1, 0, 1},
+			}
+			sobelY := [][]float64{
+				{-1, -2, -1},
+				{0, 0, 0},
+				{1, 2, 1},
+			}
+
+			gx += intensity * sobelX[dy+1][dx+1]
+			gy += intensity * sobelY[dy+1][dx+1]
+		}
+	}
+
+	// Calculate edge magnitude
+	edgeMagnitude := (gx*gx + gy*gy)
+	if edgeMagnitude > 1.0 {
+		edgeMagnitude = 1.0
+	}
+
+	return edgeMagnitude
+}
+
+// enhanceContrast applies a sigmoid curve for better contrast
+func enhanceContrast(intensity float64) float64 {
+	// Apply S-curve (sigmoid) for better contrast
+	// This makes dark areas darker and light areas lighter
+	const steepness = 6.0
+	const midpoint = 0.5
+
+	// Sigmoid function: 1 / (1 + e^(-steepness * (x - midpoint)))
+	sigmoid := 1.0 / (1.0 + (2.718281828459045 * (-steepness * (intensity - midpoint))))
+
+	return sigmoid
 }
 
 // isImageFile checks if the filename suggests it's an image file
